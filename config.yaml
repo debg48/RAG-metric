@@ -1,0 +1,40 @@
+dataset:
+  name: "squad_v2"
+  split: "validation"
+  sample_size: 200
+  random_seed: 42
+
+retrieval:
+  top_k: 5
+  embedding_model: "all-MiniLM-L6-v2"
+  use_bm25: true
+
+generator:
+  model_name: "goekdenizguelmez/JOSIEFIED-Qwen3:4b"
+  temperature: 0.3
+  max_tokens: 150
+
+perturbation:
+  remove_top1: true
+  replace_top1: true
+  shuffle_order: true
+  inject_irrelevant: true
+
+rsi:
+  similarity_metric: "cosine"
+
+labeling:
+  em_threshold: 0.0
+  f1_threshold: 0.3
+  evidence_overlap_threshold: 0.3
+
+adaptive:
+  rsi_threshold: 0.5
+  re_retrieval_budget: 1
+
+paths:
+  data_dir: "data"
+  results_dir: "results"
+  raw_logs_dir: "results/raw"
+  tables_dir: "results/tables"
+  figures_dir: "results/figures"
