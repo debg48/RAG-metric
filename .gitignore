@@ -1,4 +1,4 @@
-*.txt
+*ds.txt
 .venv
 log
 results

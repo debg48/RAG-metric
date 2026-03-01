@@ -54,9 +54,15 @@ def load_hotpotqa_subset(sample_size: int = 350, seed: int = 42) -> List[Dict[st
     
     results = []
     for item in sampled:
-        # HotpotQA context is a list of [title, list_of_sentences]
-        # We flatten it to a single string for corpus building
-        flat_context = " ".join([f"{title}: {' '.join(sents)}" for title, sents in item["context"]["sentences"]])
+        # HotpotQA context is a dict with keys 'title' (list of strings) and 'sentences' (list of list of strings)
+        titles = item["context"]["title"]
+        sentences_lists = item["context"]["sentences"]
+        
+        flat_context = " ".join([
+            f"{title}: {' '.join(sents)}" 
+            for title, sents in zip(titles, sentences_lists)
+        ])
+        
         results.append({
             "id": f"hotpot_{item['id']}",
             "question": item["question"],
