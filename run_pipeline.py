@@ -365,8 +365,9 @@ if __name__ == "__main__":
         # New run mode: Generate unique run ID
         import datetime
         model_safe_name = config["generator"]["model_name"].replace("/", "_").replace(":", "_")
+        dataset_safe_name = config["dataset"]["dataset_flag"]
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_id = f"{model_safe_name}_{timestamp}"
+        run_id = f"{model_safe_name}_{dataset_safe_name}_{timestamp}"
         
         # Update paths in config
         base_results = os.path.join(config["paths"]["results_dir"], run_id)
