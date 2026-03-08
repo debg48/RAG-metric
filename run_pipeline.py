@@ -60,8 +60,12 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
         medical_size = sample_size - squad_size
         medquad_size = int(medical_size * 0.5)
         pubmedqa_size = medical_size - medquad_size
+    elif dataset_flag == "medquad":
+        squad_size, medquad_size, pubmedqa_size = 0, sample_size, 0
+    elif dataset_flag == "pubmedqa":
+        squad_size, medquad_size, pubmedqa_size = 0, 0, sample_size
     else:
-        raise ValueError(f"Unknown dataset flag: {dataset_flag}. Use 'squad', 'medical', or 'both'.")
+        raise ValueError(f"Unknown dataset flag: {dataset_flag}. Use 'squad', 'medical', 'both', 'medquad', or 'pubmedqa'.")
     
     logger.info(f"1. Loading dataset(s): {dataset_flag} (squad={squad_size}, medquad={medquad_size}, pubmedqa={pubmedqa_size})")
     queries, corpus = load_mixed_datasets(squad_size, medquad_size, pubmedqa_size, ds_conf.get("random_seed", 42))
@@ -335,7 +339,7 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
     parser.add_argument("--sample-size", type=int, help="Override sample size in config for quick testing")
     parser.add_argument("--model", type=str, help="Override Ollama model name in config")
-    parser.add_argument("--dataset", type=str, choices=["squad", "medical", "both"], help="Which dataset(s) to run on")
+    parser.add_argument("--dataset", type=str, choices=["squad", "medical", "both", "medquad", "pubmedqa"], help="Which dataset(s) to run on")
     parser.add_argument("--resume", type=str, help="Path to a previous run directory to resume from")
     args = parser.parse_args()
     
