@@ -78,15 +78,42 @@ def inject_irrelevant(query: str, passages: List[Dict[str, Any]], retriever: Any
         new_passages = copy.deepcopy(passages)
         # Prepend irrelevant doc
         new_passages.insert(0, irrelevant_doc)
-        # Optional: trim back to k? The plan says "prepend", keeping k+1 might dilute, let's keep k+1
+        # Keep k+1 passage
         return new_passages 
     else:
         return passages
 
+def remove_top2(query: str, passages: List[Dict[str, Any]], retriever: Any = None) -> List[Dict[str, Any]]:
+    """Remove the rank-1 and rank-2 documents."""
+    if not passages or len(passages) <= 2:
+        return passages[-1:] if passages else [] # Leave at least something, or empty
+    return passages[2:]
+
+def replace_with_adversarial(query: str, passages: List[Dict[str, Any]], retriever: Any) -> List[Dict[str, Any]]:
+    """Replace rank-1 document with a highly contradictory/adversarial distractor if possible."""
+    # We approximate this by finding a document that is semantically dissimilar to the top-1 doc
+    # but still somewhat related to the query, OR just a hard negative from the bottom of top-100.
+    if not passages or not retriever or not hasattr(retriever, 'corpus'):
+        return passages
+        
+    top_100 = retriever.retrieve(query, top_k=100)
+    if len(top_100) > 50:
+        # Take a hard negative from rank 50-100
+        seed = hash(query) % (2**32 - 1)
+        rng = random.Random(seed)
+        distractor = top_100[rng.randint(50, min(99, len(top_100)-1))]
+        
+        new_passages = copy.deepcopy(passages)
+        new_passages[0] = distractor
+        return new_passages
+    return passages
+
 # Registry of perturbation names to functions
 PERTURBATION_REGISTRY: Dict[str, Callable] = {
     "remove_top1": remove_top1,
+    "remove_top2": remove_top2,
     "replace_top1": replace_top1,
+    "replace_adversarial": replace_with_adversarial,
     "shuffle_order": shuffle_order,
     "inject_irrelevant": inject_irrelevant
 }

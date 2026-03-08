@@ -6,11 +6,12 @@ The experimental setup is explicitly designed to be runnable on consumer hardwar
 
 ## Core Features
 
-- **Models Supported:** Qwen3 4B (`goekdenizguelmez/JOSIEFIED-Qwen3:4b`), Llama 3 8B Instruct Q4 (`llama3:8b-instruct-q4_0`), or any other Ollama-compatible model.
-- **Datasets Supported:** SQuAD v2 (Extractive/Abstractive QA) and HotpotQA (Multi-hop QA).
+- **Models Supported:** Qwen2.5 1.5B Instruct (`qwen2.5:1.5b-instruct` - **Recommended**), TinyLlama 1.1B (`tinyllama`), or any other ultra-lightweight Ollama model.
+- **Datasets Supported:** SQuAD v2 (Extractive/Abstractive QA), MedQuAD (Medical QA), and PubMedQA (Biomedical QA).
 - **Retrievers:** FAISS Dense Retrieval (`all-MiniLM-L6-v2`) and BM25 Sparse Retrieval.
-- **Perturbation Strategies (4):** Rank-1 Removal, Rank-1 Replacement with Rank $k+1$, Document Order Shuffling, and Irrelevant Document Injection.
-- **Metrics Evaluated:** RSI (Mean, Variance, Max), Token Entropy (Proxy via embedding variance), Calibrated Self-Confidence, Document Similarity, Exact Match (EM), and Word-level F1.
+- **Perturbation Strategies (6):** Rank-1 Removal, Rank-1 & Rank-2 Removal, Rank-1 Replacement with Rank $k+1$, Rank-1 Replacement with Adversarial Distractor, Document Order Shuffling, and Irrelevant Document Injection.
+- **Resiliency:** Built-in **Checkpoint/Resume** support. Interrupted runs can be resumed from the same folder without losing progress.
+- **Metrics Evaluated:** RSI (Mean), RSI Directional Instability (Variance, Max), Token Entropy (Proxy via embedding variance), Calibrated Self-Confidence, Document Similarity, Exact Match (EM), and Word-level F1.
 - **Statistical Analytics:** Outputs comprehensive CSV tables and 13 generated publication-ready plots (Violin plots, ROC/AUC Curves, Cost-Benefit Adaptive Thresholding, etc.).
 
 ## Prerequisites
@@ -64,11 +65,11 @@ python run_pipeline.py --sample-size 5
 └── src/                    # Core modules
     ├── adaptive.py         # Adaptive re-retrieval policy code
     ├── baselines.py        # Entropy proxy, Doc Sim, and Self-confidence
-    ├── dataset.py          # SQuAD & HotpotQA loaders
+    ├── dataset.py          # SQuAD & Medical QA loaders
     ├── evaluation.py       # AUC, t-tests, bootstrap CI
     ├── generator.py        # Ollama API wrappers
     ├── labeling.py         # EM/F1 hallucination heuristics
-    ├── perturbation.py     # 4 implementation strategies
+    ├── perturbation.py     # 6 implementation strategies (includes adversarial & top-2)
     ├── retrieval.py        # FAISS / BM25 class wrappers
-    └── rsi.py              # Divergence / Cosine Similarity logic
+    └── rsi.py              # Divergence / Cosine Similarity logic (Mean, Max, Variance)
 ```

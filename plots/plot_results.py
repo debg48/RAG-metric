@@ -103,13 +103,16 @@ class PlotGenerator:
         y_true = df['is_hallucinated'].astype(int)
         
         predictors = {
-            'RSI': df['rsi_mean'],
+            'RSI (Mean)': df['rsi_mean'],
+            'RSI (Norm)': df['rsi_norm'],
+            'RSI (Evidence)': df['rsi_evidence'],
+            'RSI (Weighted)': df['rsi_weighted'],
             'Entropy Proxy': df['entropy_proxy'],
             'Doc Sim (Inv)': 1.0 - df['doc_similarity'], # Lower sim -> more likely to hallucinate
             'Confidence (Inv)': 1.0 - df['confidence'] # Lower conf -> more likely to hallucinate
         }
         
-        colors = ['#e74c3c', '#3498db', '#9b59b6', '#f1c40f']
+        colors = ['#e74c3c', '#d35400', '#27ae60', '#8e44ad', '#3498db', '#f39c12', '#2c3e50']
         
         for (name, scores), color in zip(predictors.items(), colors):
             fpr, tpr, _ = roc_curve(y_true, scores)
@@ -163,12 +166,15 @@ class PlotGenerator:
         y_true = df['is_hallucinated'].astype(int)
         
         predictors = {
-            'RSI': df['rsi_mean'],
+            'RSI (Mean)': df['rsi_mean'],
+            'RSI (Norm)': df['rsi_norm'],
+            'RSI (Evidence)': df['rsi_evidence'],
+            'RSI (Weighted)': df['rsi_weighted'],
             'Entropy Proxy': df['entropy_proxy'],
             'Confidence (Inv)': 1.0 - df['confidence']
         }
         
-        colors = ['#e74c3c', '#3498db', '#f1c40f']
+        colors = ['#e74c3c', '#d35400', '#27ae60', '#8e44ad', '#3498db', '#2c3e50']
         
         for (name, scores), color in zip(predictors.items(), colors):
             precision, recall, _ = precision_recall_curve(y_true, scores)

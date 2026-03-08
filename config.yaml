@@ -1,7 +1,7 @@
 dataset:
   name: "squad_v2"
   split: "validation"
-  sample_size: 200
+  sample_size: 450
   random_seed: 42
 
 retrieval:
@@ -10,13 +10,15 @@ retrieval:
   use_bm25: true
 
 generator:
-  model_name: "goekdenizguelmez/JOSIEFIED-Qwen3:4b"
+  model_name: "qwen2.5:1.5b-instruct"
   temperature: 0.3
   max_tokens: 150
 
 perturbation:
   remove_top1: true
+  remove_top2: true
   replace_top1: true
+  replace_adversarial: true
   shuffle_order: true
   inject_irrelevant: true
 

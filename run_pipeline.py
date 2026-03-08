@@ -15,7 +15,7 @@ from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
 from src.generator import OllamaGenerator
 from src.perturbation import apply_perturbations
 from src.rsi import RSIComputer
-from src.labeling import label_hallucination, compute_exact, metric_max_over_ground_truths, compute_f1
+from src.labeling import label_hallucination, compute_exact, metric_max_over_ground_truths, compute_f1, compute_evidence_overlap
 from src.baselines import BaselineSignals
 from src.evaluation import compare_groups, compute_correlations, compute_roc_auc, bootstrap_auc
 from src.adaptive import adaptive_policy
@@ -47,20 +47,24 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
     os.makedirs(paths["figures_dir"], exist_ok=True)
     
     # 1. Load Dataset
-    logger.info("1. Loading SQuAD and HotpotQA subsets...")
     ds_conf = config["dataset"]
-    # Allow override via CLI but default to split if provided
-    squad_size = ds_conf.get("squad_sample_size", 450)
-    hotpot_size = ds_conf.get("hotpot_sample_size", 350)
+    sample_size = ds_conf.get("sample_size", 450)
+    dataset_flag = ds_conf.get("dataset_flag", "squad")  # squad | hotpot | both
     
-    # If a global sample size override is passed, split it proportionally
-    if ds_conf.get("sample_size_override"):
-        total = squad_size + hotpot_size
-        override = ds_conf["sample_size_override"]
-        squad_size = int(override * (squad_size / total))
-        hotpot_size = override - squad_size
-        
-    queries, corpus = load_mixed_datasets(squad_size, hotpot_size, ds_conf.get("random_seed", 42))
+    if dataset_flag == "squad":
+        squad_size, medquad_size, pubmedqa_size = sample_size, 0, 0
+    elif dataset_flag == "medical":
+        squad_size, medquad_size, pubmedqa_size = 0, int(sample_size * 0.5), sample_size - int(sample_size * 0.5)
+    elif dataset_flag == "both":
+        squad_size = int(sample_size * 0.56)   # ~56% SQuAD
+        medical_size = sample_size - squad_size
+        medquad_size = int(medical_size * 0.5)
+        pubmedqa_size = medical_size - medquad_size
+    else:
+        raise ValueError(f"Unknown dataset flag: {dataset_flag}. Use 'squad', 'medical', or 'both'.")
+    
+    logger.info(f"1. Loading dataset(s): {dataset_flag} (squad={squad_size}, medquad={medquad_size}, pubmedqa={pubmedqa_size})")
+    queries, corpus = load_mixed_datasets(squad_size, medquad_size, pubmedqa_size, ds_conf.get("random_seed", 42))
     
     # 2. Build Retriever
     logger.info("2. Building Retriever...")
@@ -71,7 +75,7 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
         retriever = DenseRetriever(model_name=ret_conf["embedding_model"], device="cpu")
     retriever.build_index(corpus)
     
-    # 3. Initialize Generator and Metric Modules
+    # 3. Initializing Generator and Metric Modules
     logger.info("3. Initializing Generator and Metrics...")
     gen_conf = config["generator"]
     generator = OllamaGenerator(
@@ -88,11 +92,25 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
     active_perturbations = [k for k, v in pert_conf.items() if v]
     
     # Result collection
+    checkpoint_path = os.path.join(paths["raw_logs_dir"], "results_partial.jsonl")
     results = []
+    processed_ids = set()
     
+    if os.path.exists(checkpoint_path):
+        logger.info(f"Checking for existing progress in {checkpoint_path}...")
+        with open(checkpoint_path, "r") as f:
+            for line in f:
+                res = json.loads(line)
+                results.append(res)
+                processed_ids.add(res["qid"])
+        logger.info(f"Resuming from checkpoint: {len(processed_ids)} queries already processed.")
+
     logger.info(f"4. Processing {len(queries)} queries...")
     for item in tqdm(queries, desc="Pipeline Run"):
         qid = item["id"]
+        if qid in processed_ids:
+            continue
+            
         q_text = item["question"]
         gts = item["answers"]
         
@@ -104,6 +122,9 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
         a_0, conf = generator.generate_with_confidence(q_text, base_passages)
         gen_time = time.time() - start_time
         
+        # Compute baseline evidence overlap
+        a0_evidence_overlap = compute_evidence_overlap(a_0, [p["text"] for p in base_passages])
+        
         # Pre-compute for adaptive policy cost sweep (k*2)
         expanded_passages = retriever.retrieve(q_text, top_k=ret_conf["top_k"] * 2)
         a_expanded = generator.generate(q_text, expanded_passages)
@@ -112,14 +133,23 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
         perturbed_contexts = apply_perturbations(q_text, base_passages, retriever, active_perturbations)
         
         a_i_dict = {}
+        ai_evidence_overlaps = []
         for p_type, p_passages in perturbed_contexts.items():
             a_i = generator.generate(q_text, p_passages)
             a_i_dict[p_type] = a_i
             
+            # Compute perturbed evidence overlap
+            ai_overlap = compute_evidence_overlap(a_i, [p["text"] for p in p_passages])
+            ai_evidence_overlaps.append(ai_overlap)
+            
         a_i_list = list(a_i_dict.values())
             
         # Metrics Computation
-        rsi_stats = rsi_computer.compute_rsi(a_0, a_i_list)
+        rsi_stats = rsi_computer.compute_rsi(
+            a_0, a_i_list, 
+            a0_evidence_overlap=a0_evidence_overlap, 
+            ai_evidence_overlaps=ai_evidence_overlaps
+        )
         
         # Store individual divergence per perturbation
         for i, p_type in enumerate(a_i_dict.keys()):
@@ -171,6 +201,11 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
             "gen_time_sec": gen_time
         }
         rec.update(rsi_stats)
+        
+        # Save to checkpoint
+        with open(checkpoint_path, "a") as f:
+            f.write(json.dumps(rec) + "\n")
+            
         results.append(rec)
         
     # Save raw results
@@ -178,6 +213,11 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
     df = pd.DataFrame(results)
     df.to_csv(os.path.join(paths["raw_logs_dir"], "full_results.csv"), index=False)
     
+    # Check if we have results to process
+    if df.empty:
+        logger.warning("No results to evaluate. Exiting.")
+        return
+        
     # 6. Statistical Evaluation
     logger.info("6. Running statistical evaluation...")
     y_true = df["is_hallucinated"].tolist()
@@ -192,7 +232,15 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
     corrs = compute_correlations(df["rsi_mean"].tolist(), df["f1_score"].tolist())
     
     # ROC AUC
-    roc_rsi = compute_roc_auc(y_true, df["rsi_mean"].tolist())
+    roc_rsi_mean = compute_roc_auc(y_true, df["rsi_mean"].tolist())
+    roc_rsi_max = compute_roc_auc(y_true, df["rsi_max"].tolist())
+    roc_rsi_var = compute_roc_auc(y_true, df["rsi_variance"].tolist())
+    
+    # New metrics
+    roc_rsi_norm = compute_roc_auc(y_true, df["rsi_norm"].tolist())
+    roc_rsi_evidence = compute_roc_auc(y_true, df["rsi_evidence"].tolist())
+    roc_rsi_weighted = compute_roc_auc(y_true, df["rsi_weighted"].tolist())
+    
     roc_entropy = compute_roc_auc(y_true, df["entropy_proxy"].tolist())
     roc_conf = compute_roc_auc(y_true, (1.0 - df["confidence"]).tolist())  # Low config = High risk
     roc_docsim = compute_roc_auc(y_true, (1.0 - df["doc_similarity"]).tolist())
@@ -207,11 +255,16 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
         "t_test_p_value": t_test_res.get("p_value", 1.0),
         "cohens_d": t_test_res.get("cohens_d", 0.0),
         "rsi_f1_pearson": corrs.get("pearson_r", 0.0),
-        "auc_rsi": roc_rsi["auc"],
+        "auc_rsi_mean": roc_rsi_mean["auc"],
+        "auc_rsi_max": roc_rsi_max["auc"],
+        "auc_rsi_variance": roc_rsi_var["auc"],
+        "auc_rsi_norm": roc_rsi_norm["auc"],
+        "auc_rsi_evidence": roc_rsi_evidence["auc"],
+        "auc_rsi_weighted": roc_rsi_weighted["auc"],
         "auc_entropy": roc_entropy["auc"],
         "auc_confidence": roc_conf["auc"],
         "auc_doc_sim": roc_docsim["auc"],
-        "opt_rsi_threshold": roc_rsi["optimal_threshold"]
+        "opt_rsi_threshold": roc_rsi_mean.get("optimal_threshold", 0.5)
     }
     
     with open(os.path.join(paths["tables_dir"], "eval_summary.json"), "w") as f:
@@ -256,7 +309,7 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
         plotter.plot_fig4_roc_comparison(df)
         
         ci_dict = {
-            "RSI": ci_rsi,
+            "RSI (Mean)": ci_rsi,
             "Entropy": ci_ent,
             "1 - Confidence": ci_cnf
         }
@@ -265,7 +318,7 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
         plotter.plot_fig6_precision_recall(df)
         
         # Predict using optimal threshold from Youden's J
-        y_pred = df["rsi_mean"] > roc_rsi["optimal_threshold"]
+        y_pred = df["rsi_mean"] > roc_rsi_mean["optimal_threshold"]
         plotter.plot_fig7_confusion_matrix(y_true, y_pred.tolist())
         
         plotter.plot_fig8_adaptive_cost_benefit(sweep_results)
@@ -282,27 +335,42 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
     parser.add_argument("--sample-size", type=int, help="Override sample size in config for quick testing")
     parser.add_argument("--model", type=str, help="Override Ollama model name in config")
+    parser.add_argument("--dataset", type=str, choices=["squad", "medical", "both"], help="Which dataset(s) to run on")
+    parser.add_argument("--resume", type=str, help="Path to a previous run directory to resume from")
     args = parser.parse_args()
     
     config = load_config(args.config)
     if args.sample_size:
-        config["dataset"]["sample_size_override"] = args.sample_size
+        config["dataset"]["sample_size"] = args.sample_size
     if args.model:
         config["generator"]["model_name"] = args.model
+    if args.dataset:
+        config["dataset"]["dataset_flag"] = args.dataset
         
-    # Generate unique run ID to prevent overwriting plots
-    import datetime
-    model_safe_name = config["generator"]["model_name"].replace("/", "_").replace(":", "_")
-    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_id = f"{model_safe_name}_{timestamp}"
-    
-    # Update paths in config
-    base_results = os.path.join(config["paths"]["results_dir"], run_id)
-    config["paths"]["raw_logs_dir"] = os.path.join(base_results, "raw")
-    config["paths"]["tables_dir"] = os.path.join(base_results, "tables")
-    config["paths"]["figures_dir"] = os.path.join(base_results, "figures")
+    if args.resume:
+        # Resume mode: Use provided path
+        base_results = args.resume
+        logger_name = f"pipeline_resume_{os.path.basename(base_results)}"
+        logger = setup_logger(base_results)
+        # Update paths in config for the experiment to use this folder
+        config["paths"]["raw_logs_dir"] = os.path.join(base_results, "raw")
+        config["paths"]["tables_dir"] = os.path.join(base_results, "tables")
+        config["paths"]["figures_dir"] = os.path.join(base_results, "figures")
+        logger.info(f"Resuming experiment from: {base_results}")
+    else:
+        # New run mode: Generate unique run ID
+        import datetime
+        model_safe_name = config["generator"]["model_name"].replace("/", "_").replace(":", "_")
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_id = f"{model_safe_name}_{timestamp}"
         
-    log_dir = base_results
-    logger = setup_logger(log_dir)
+        # Update paths in config
+        base_results = os.path.join(config["paths"]["results_dir"], run_id)
+        config["paths"]["raw_logs_dir"] = os.path.join(base_results, "raw")
+        config["paths"]["tables_dir"] = os.path.join(base_results, "tables")
+        config["paths"]["figures_dir"] = os.path.join(base_results, "figures")
+            
+        log_dir = base_results
+        logger = setup_logger(log_dir)
     
     run_experiment(config, logger)
