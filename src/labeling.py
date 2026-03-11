@@ -3,6 +3,7 @@ import string
 import collections
 from typing import List, Callable
 import logging
+from rouge_score import rouge_scorer
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,14 @@ def compute_f1(a_gold: str, a_pred: str) -> float:
     f1 = (2 * precision * recall) / (precision + recall)
     return f1
 
+def compute_rouge_l(a_gold: str, a_pred: str) -> float:
+    """Compute ROUGE-L f-measure for long medical text."""
+    if not a_gold.strip() or not a_pred.strip():
+        return 0.0
+    scorer = rouge_scorer.RougeScorer(['rougeL'], use_stemmer=True)
+    scores = scorer.score(a_gold, a_pred)
+    return scores['rougeL'].fmeasure
+
 def metric_max_over_ground_truths(metric_fn: Callable, prediction: str, ground_truths: List[str]) -> float:
     """Compute metric against all ground truths, take the max."""
     if not ground_truths:
@@ -90,13 +99,14 @@ def label_hallucination(prediction: str,
                         evidence_texts: List[str],
                         em_threshold: float = 0.0,
                         f1_threshold: float = 0.3,
-                        overlap_threshold: float = 0.3) -> bool:
+                        overlap_threshold: float = 0.3,
+                        dataset_type: str = "squad2") -> bool:
     """
     Determine if the answer is a hallucination.
     Operational definition:
-    1. Not correct (F1 < threshold)
+    1. Not correct (F1 or ROUGE < threshold)
     2. AND potentially not supported by text (evidence overlap < threshold)
-    Note: A 'I don't know' answer might have low F1 and low overlap, but is it a hallucination?
+    Note: A 'I don't know' answer might have low score and low overlap, but is it a hallucination?
     Usually we consider 'I don't know' as a safe refusal, not a hallucination.
     """
     pred_norm = normalize_answer(prediction)
@@ -108,15 +118,18 @@ def label_hallucination(prediction: str,
         return False
         
     best_em = metric_max_over_ground_truths(compute_exact, prediction, ground_truths)
-    best_f1 = metric_max_over_ground_truths(compute_f1, prediction, ground_truths)
+    
+    scoring_fn = compute_rouge_l if dataset_type in ["medquad", "pubmedqa"] else compute_f1
+    best_score = metric_max_over_ground_truths(scoring_fn, prediction, ground_truths)
+    
     overlap = compute_evidence_overlap(prediction, evidence_texts)
     
     # A hallucination occurs when the model gives a wrong answer AND makes things up
-    # However, for pure generation evaluation, often just F1 < threshold is considered hallucination
+    # However, for pure generation evaluation, often just Score < threshold is considered hallucination
     # if it's not a refusal.
     # We use a combined definition here.
     
-    is_wrong = best_f1 < f1_threshold
+    is_wrong = best_score < f1_threshold
     
     # Optional strict definition: it's a hallucination if it's wrong AND has low overlap with text
     # (meaning it pulled external knowledge)

@@ -1,7 +1,7 @@
 dataset:
   name: "squad_v2"
   split: "validation"
-  sample_size: 450
+  sample_size: 200
   random_seed: 42
 
 retrieval:

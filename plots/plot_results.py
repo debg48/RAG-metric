@@ -41,14 +41,18 @@ class PlotGenerator:
         # We need a proper grouping column
         df['Group'] = df['is_hallucinated'].map({True: 'Hallucinated', False: 'Correct'})
         
+        # Guard against single class plotting causing palette warnings
+        hue_order = None if len(df['Group'].unique()) < 2 else ['Correct', 'Hallucinated']
         sns.violinplot(
             data=df, x='Group', y='rsi_mean', 
             inner=None, color=".8", ax=ax, alpha=0.5
         )
         sns.boxplot(
             data=df, x='Group', y='rsi_mean',
+            hue='Group', hue_order=hue_order,
+            legend=False,
             width=0.3, boxprops={'zorder': 2}, ax=ax,
-            palette=['#2ecc71', '#e74c3c'] # Green for correct, Red for hallucinated
+            palette=['#2ecc71', '#e74c3c'][:len(df["Group"].unique())]
         )
         
         ax.set_title("RSI Distribution: Correct vs. Hallucinated Outputs")
@@ -63,6 +67,7 @@ class PlotGenerator:
         
         df['Group'] = df['is_hallucinated'].map({True: 'Hallucinated', False: 'Correct'})
         
+        hue_order = None if len(df['Group'].unique()) < 2 else ['Correct', 'Hallucinated']
         sns.regplot(
             data=df, x='rsi_mean', y='f1_score', 
             scatter=False, color='black', ax=ax,
@@ -70,7 +75,8 @@ class PlotGenerator:
         )
         sns.scatterplot(
             data=df, x='rsi_mean', y='f1_score',
-            hue='Group', palette=['#2ecc71', '#e74c3c'],
+            hue='Group', hue_order=hue_order,
+            palette=['#2ecc71', '#e74c3c'][:len(df["Group"].unique())],
             alpha=0.7, ax=ax, s=100
         )
         
@@ -84,8 +90,10 @@ class PlotGenerator:
         """Fig 3: RSI by Exact Match"""
         fig, ax = plt.subplots(figsize=(6, 5))
         
+        # Disable legend and hue mappings appropriately to avoid warnings
         sns.boxplot(
             data=df, x='exact_match', y='rsi_mean',
+            hue='exact_match', legend=False,
             palette='Blues', ax=ax
         )
         ax.set_title("RSI grouped by Exact Match")
@@ -111,6 +119,19 @@ class PlotGenerator:
             'Doc Sim (Inv)': 1.0 - df['doc_similarity'], # Lower sim -> more likely to hallucinate
             'Confidence (Inv)': 1.0 - df['confidence'] # Lower conf -> more likely to hallucinate
         }
+        
+        if len(y_true.unique()) < 2:
+            logger.warning("ROC comparison requires both True and False classes. Plotting Score Distribution instead.")
+            # Alternative plot: Score distribution for the single class
+            fig, ax = plt.subplots(figsize=(10, 6))
+            plot_df = pd.DataFrame(predictors)
+            sns.boxplot(data=plot_df, orient="h", ax=ax, palette="Set2")
+            sns.stripplot(data=plot_df, orient="h", ax=ax, color='black', alpha=0.5, size=4)
+            class_label = "Hallucinated" if y_true.iloc[0] == 1 else "Correct"
+            ax.set_title(f"Predictor Score Distributions (All instances are {class_label})")
+            ax.set_xlabel('Score')
+            self._save(fig, "fig4_score_distributions_single_class")
+            return
         
         colors = ['#e74c3c', '#d35400', '#27ae60', '#8e44ad', '#3498db', '#f39c12', '#2c3e50']
         
@@ -173,6 +194,21 @@ class PlotGenerator:
             'Entropy Proxy': df['entropy_proxy'],
             'Confidence (Inv)': 1.0 - df['confidence']
         }
+
+        if len(y_true.unique()) < 2:
+            logger.warning("PR curve requires both True and False classes. Plotting Density instead.")
+            # Alternative plot: KDE plots for scores for the single class
+            fig, ax = plt.subplots(figsize=(10, 6))
+            plot_df = pd.DataFrame(predictors)
+            for col in plot_df.columns:
+                sns.kdeplot(data=plot_df[col], fill=True, alpha=0.3, label=col, ax=ax)
+            class_label = "Hallucinated" if y_true.iloc[0] == 1 else "Correct"
+            ax.set_title(f"Density Estimates of Predictors (All instances are {class_label})")
+            ax.set_xlabel('Score')
+            ax.set_ylabel('Density')
+            ax.legend()
+            self._save(fig, "fig6_pr_alternative_density")
+            return
         
         colors = ['#e74c3c', '#d35400', '#27ae60', '#8e44ad', '#3498db', '#2c3e50']
         
@@ -259,7 +295,7 @@ class PlotGenerator:
         self._save(fig, "fig10_perturbation_heatmap")
 
     def plot_fig13_correlation_matrix(self, df: pd.DataFrame):
-        """Fig 13: Correlation heatmap"""
+        """Fig 13: Correlation heatmap (proper lower triangle)"""
         cols = ['rsi_mean', 'entropy_proxy', 'confidence', 'doc_similarity', 'f1_score', 'exact_match']
         available_cols = [c for c in cols if c in df.columns]
         
@@ -267,6 +303,9 @@ class PlotGenerator:
             return
             
         corr = df[available_cols].corr(method='spearman')
+        
+        # Fill NaN correlations (from zero-variance columns) with 0.0
+        corr = corr.fillna(0.0)
         
         # Clean names
         clean_names = {
@@ -281,8 +320,8 @@ class PlotGenerator:
         
         fig, ax = plt.subplots(figsize=(8, 7))
         
-        # Mask upper triangle
-        mask = np.triu(np.ones_like(corr, dtype=bool))
+        # Mask upper triangle AND the diagonal for a clean lower triangle
+        mask = np.triu(np.ones_like(corr, dtype=bool), k=0)
         
         sns.heatmap(corr, mask=mask, cmap='coolwarm', center=0,
                    annot=True, fmt='.2f', vmin=-1, vmax=1, ax=ax,

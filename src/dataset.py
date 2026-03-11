@@ -80,14 +80,15 @@ def load_pubmedqa_subset(sample_size: int = 350, seed: int = 42) -> List[Dict[st
     
     results = []
     for i, item in enumerate(sampled):
-        # PubMedQA provides 'CONTEXTS' as a list of strings
-        context = " ".join(item["CONTEXTS"]) if isinstance(item["CONTEXTS"], list) else str(item["CONTEXTS"])
+        # PubMedQA provides 'contexts' as a list of strings within 'context'
+        context_data = item["context"]["contexts"]
+        context = " ".join(context_data) if isinstance(context_data, list) else str(context_data)
         
         results.append({
             "id": f"pubmedqa_{i}",
-            "question": item["QUESTION"],
+            "question": item["question"],
             "context": context,
-            "answers": [item["LONG_ANSWER"]], 
+            "answers": [item["long_answer"]], 
             "dataset": "pubmedqa"
         })
         

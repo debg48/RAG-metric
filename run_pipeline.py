@@ -15,7 +15,7 @@ from src.retrieval import DenseRetriever, SparseRetriever, HybridRetriever
 from src.generator import OllamaGenerator
 from src.perturbation import apply_perturbations
 from src.rsi import RSIComputer
-from src.labeling import label_hallucination, compute_exact, metric_max_over_ground_truths, compute_f1, compute_evidence_overlap
+from src.labeling import label_hallucination, compute_exact, metric_max_over_ground_truths, compute_f1, compute_rouge_l, compute_evidence_overlap
 from src.baselines import BaselineSignals
 from src.evaluation import compare_groups, compute_correlations, compute_roc_auc, bootstrap_auc
 from src.adaptive import adaptive_policy
@@ -164,13 +164,16 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
         doc_sim = baselines.compute_doc_similarity(q_text, base_passages)
         
         # Quality Labeling
+        ds_type = item.get("dataset", "squad2")
+        scoring_fn = compute_rouge_l if ds_type in ["medquad", "pubmedqa"] else compute_f1
+        
         evidence_texts = [p["text"] for p in base_passages]
         em = metric_max_over_ground_truths(compute_exact, a_0, gts)
-        f1 = metric_max_over_ground_truths(compute_f1, a_0, gts)
+        f1 = metric_max_over_ground_truths(scoring_fn, a_0, gts)
         
         # Expanded quality (for adaptive policy)
         expanded_em = metric_max_over_ground_truths(compute_exact, a_expanded, gts)
-        expanded_f1 = metric_max_over_ground_truths(compute_f1, a_expanded, gts)
+        expanded_f1 = metric_max_over_ground_truths(scoring_fn, a_expanded, gts)
         
         # Label hallucination based on config thresholds
         lbl_conf = config["labeling"]
@@ -178,14 +181,16 @@ def run_experiment(config: Dict[str, Any], logger: logging.Logger):
             a_0, gts, evidence_texts,
             em_threshold=lbl_conf["em_threshold"],
             f1_threshold=lbl_conf["f1_threshold"],
-            overlap_threshold=lbl_conf["evidence_overlap_threshold"]
+            overlap_threshold=lbl_conf["evidence_overlap_threshold"],
+            dataset_type=ds_type
         )
         
         is_hallucinated_expanded = label_hallucination(
             a_expanded, gts, [p["text"] for p in expanded_passages],
             em_threshold=lbl_conf["em_threshold"],
             f1_threshold=lbl_conf["f1_threshold"],
-            overlap_threshold=lbl_conf["evidence_overlap_threshold"]
+            overlap_threshold=lbl_conf["evidence_overlap_threshold"],
+            dataset_type=ds_type
         )
         
         rec = {
